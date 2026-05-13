@@ -76,6 +76,7 @@ export const validatePlayerIdentity = ({
   player,
   existingPlayers = [],
   editingPlayerId = "",
+  requireTeam = true,
 }) => {
   const normalized = buildPlayerPayload(player);
   const candidates = existingPlayers.filter(
@@ -88,7 +89,7 @@ export const validatePlayerIdentity = ({
   if (!normalized.name) {
     return { ok: false, message: "Player name is required." };
   }
-  if (!normalized.teamId) {
+  if (requireTeam && !normalized.teamId) {
     return { ok: false, message: "Please select a team." };
   }
   if (!normalized.email || !EMAIL_PATTERN.test(normalized.email)) {

@@ -322,6 +322,7 @@ export default function UserRegistration() {
     const validation = validatePlayerIdentity({
       player: submissionForm,
       existingPlayers: [],
+      requireTeam: false,
     });
 
     if (!validation.ok) {
