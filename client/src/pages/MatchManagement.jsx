@@ -11,12 +11,10 @@ const MatchManagement = () => {
   const [fixtures, setFixtures] = useState([]);
   const [pools, setPools] = useState({ A: [], B: [] });
   const [loading, setLoading] = useState(false);
+  const visibleTeams = eventId ? teams : [];
 
   useEffect(() => {
-    if (!eventId) {
-      setTeams([]);
-      return;
-    }
+    if (!eventId) return;
 
     const fetchTeams = async () => {
       try {
@@ -37,14 +35,14 @@ const MatchManagement = () => {
   }, [eventId]);
 
   const generateRandomPoolsAndFixtures = async () => {
-    if (teams.length < 4) {
+    if (visibleTeams.length < 4) {
       alert("Minimum 4 teams required to create pools and matches.");
       return;
     }
 
     setLoading(true);
     // Client-side visual generation for Pools
-    const shuffled = [...teams].sort(() => 0.5 - Math.random());
+    const shuffled = [...visibleTeams].sort(() => 0.5 - Math.random());
     const half = Math.ceil(shuffled.length / 2);
     const poolA = shuffled.slice(0, half);
     const poolB = shuffled.slice(half);
@@ -54,7 +52,7 @@ const MatchManagement = () => {
     try {
       const res = await axios.post(`${API_URL}/api/matches/generate`, {
         eventId,
-        teams,
+        teams: visibleTeams,
       });
       setFixtures(res.data.fixtures);
     } catch (err) {
@@ -105,7 +103,7 @@ const MatchManagement = () => {
         </button>
       </header>
 
-      {teams.length < 4 && (
+      {visibleTeams.length < 4 && (
         <div
           style={{
             padding: "1.5rem",

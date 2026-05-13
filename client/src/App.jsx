@@ -5,7 +5,7 @@ import {
   useLocation,
 } from "react-router-dom";
 import { Menu } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Sidebar from "./components/Sidebar";
 import BrandingBar from "./components/BrandingBar";
 import Dashboard from "./pages/Dashboard";
@@ -24,10 +24,6 @@ function AppRouter() {
   const location = useLocation();
   const hideSidebar = location.pathname === "/";
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-
-  useEffect(() => {
-    setMobileSidebarOpen(false);
-  }, [location.pathname]);
 
   return (
     <>

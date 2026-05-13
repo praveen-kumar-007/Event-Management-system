@@ -23,12 +23,81 @@ const HERO_BG_URL =
 const INDOCREONIX_LOGO_URL = "https://indocreonix.com/logo.png";
 const FIXED_EVENT_NAME = "Jharkhand Senior State Championship";
 
+const buildSavedRegistrationState = () => {
+  const defaultForm = {
+    eventId: getActiveEventId() || "",
+    playerName: "",
+    fatherName: "",
+    email: "",
+    phone: "",
+    age: "",
+    weight: "",
+    position: "Raider",
+    teamId: "",
+    dob: "",
+    aadhar: "",
+    aadharFrontUrl: "",
+    aadharBackUrl: "",
+    district: "",
+    state: "Jharkhand",
+    photoUrl: "",
+  };
+
+  if (typeof window === "undefined") {
+    return {
+      form: defaultForm,
+      photoPreview: null,
+      aadharFrontPreview: null,
+      aadharBackPreview: null,
+    };
+  }
+
+  try {
+    const saved = window.localStorage.getItem("userRegistrationForm");
+    if (!saved) {
+      return {
+        form: defaultForm,
+        photoPreview: null,
+        aadharFrontPreview: null,
+        aadharBackPreview: null,
+      };
+    }
+
+    const parsed = JSON.parse(saved);
+    return {
+      form: {
+        ...defaultForm,
+        ...parsed,
+        eventId: getActiveEventId() || parsed.eventId || defaultForm.eventId,
+      },
+      photoPreview: parsed.photoUrl || null,
+      aadharFrontPreview: parsed.aadharFrontUrl || null,
+      aadharBackPreview: parsed.aadharBackUrl || null,
+    };
+  } catch (e) {
+    console.warn("Failed to load saved registration form", e);
+    return {
+      form: defaultForm,
+      photoPreview: null,
+      aadharFrontPreview: null,
+      aadharBackPreview: null,
+    };
+  }
+};
+
 export default function UserRegistration() {
   const navigate = useNavigate();
   const [events, setEvents] = useState([]);
-  const [photoPreview, setPhotoPreview] = useState(null);
-  const [aadharFrontPreview, setAadharFrontPreview] = useState(null);
-  const [aadharBackPreview, setAadharBackPreview] = useState(null);
+  const savedRegistrationState = buildSavedRegistrationState();
+  const [photoPreview, setPhotoPreview] = useState(
+    savedRegistrationState.photoPreview,
+  );
+  const [aadharFrontPreview, setAadharFrontPreview] = useState(
+    savedRegistrationState.aadharFrontPreview,
+  );
+  const [aadharBackPreview, setAadharBackPreview] = useState(
+    savedRegistrationState.aadharBackPreview,
+  );
   const [cameraOpen, setCameraOpen] = useState(false);
   const [aadharCameraMode, setAadharCameraMode] = useState(null); // "front", "back", or null
   const [cropModalOpen, setCropModalOpen] = useState(false);
@@ -65,44 +134,7 @@ export default function UserRegistration() {
     }
   };
 
-  const [form, setForm] = useState({
-    eventId: getActiveEventId() || "",
-    playerName: "",
-    fatherName: "",
-    email: "",
-    phone: "",
-    age: "",
-    weight: "",
-    position: "Raider",
-    teamId: "",
-    dob: "",
-    aadhar: "",
-    aadharFrontUrl: "",
-    aadharBackUrl: "",
-    district: "",
-    state: "Jharkhand",
-    photoUrl: "",
-  });
-
-  // Load saved form from localStorage
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("userRegistrationForm");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        setForm((prev) => ({
-          ...prev,
-          ...parsed,
-          eventId: getActiveEventId() || parsed.eventId || prev.eventId,
-        }));
-        if (parsed.photoUrl) setPhotoPreview(parsed.photoUrl);
-        if (parsed.aadharFrontUrl) setAadharFrontPreview(parsed.aadharFrontUrl);
-        if (parsed.aadharBackUrl) setAadharBackPreview(parsed.aadharBackUrl);
-      }
-    } catch (e) {
-      console.warn("Failed to load saved registration form", e);
-    }
-  }, []);
+  const [form, setForm] = useState(savedRegistrationState.form);
 
   // Persist form to localStorage on change
   useEffect(() => {
