@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { createPortal } from "react-dom";
 import {
   EVENT_CHANGE_EVENT,
   getActiveEventId,
@@ -1207,162 +1208,165 @@ const Registration = () => {
             </motion.form>
           )}
 
-          {activeCameraTarget && (
-            <div
-              className="capture-modal-overlay"
-              role="dialog"
-              aria-modal="true"
-            >
-              <div className="capture-modal-shell">
-                <div className="capture-modal-topbar">
-                  <div className="capture-brand-wrap">
-                    <img
-                      src={INDOCREONIX_LOGO}
-                      alt="IndoCreonix"
-                      className="capture-brand-logo"
-                    />
-                    <div>
-                      <p className="capture-brand-title">Capture Studio</p>
-                      <p className="capture-brand-sub">
-                        Protected by IndoCreonix
-                      </p>
+          {typeof document !== "undefined" &&
+            activeCameraTarget &&
+            createPortal(
+              <div
+                className="capture-modal-overlay"
+                role="dialog"
+                aria-modal="true"
+              >
+                <div className="capture-modal-shell">
+                  <div className="capture-modal-topbar">
+                    <div className="capture-brand-wrap">
+                      <img
+                        src={INDOCREONIX_LOGO}
+                        alt="IndoCreonix"
+                        className="capture-brand-logo"
+                      />
+                      <div>
+                        <p className="capture-brand-title">Capture Studio</p>
+                        <p className="capture-brand-sub">
+                          Protected by IndoCreonix
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="capture-close-btn"
+                      onClick={stopLiveCamera}
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+
+                  <div className="capture-modal-content">
+                    <div className="capture-preview-stage">
+                      <video
+                        ref={cameraModalVideoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        style={modalPreviewStyle}
+                      />
+                      <div className="capture-target-pill">
+                        Now capturing: {getCaptureTargetLabel()}
+                      </div>
+                    </div>
+
+                    <div className="capture-control-panel">
+                      <h3>
+                        <SlidersHorizontal size={18} /> Fine Tune Capture
+                      </h3>
+                      <label className="capture-control-row">
+                        <span>Brightness</span>
+                        <input
+                          type="range"
+                          min="70"
+                          max="130"
+                          value={captureAdjustments.brightness}
+                          onChange={(e) =>
+                            setCaptureAdjustments((current) => ({
+                              ...current,
+                              brightness: Number(e.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="capture-control-row">
+                        <span>Contrast</span>
+                        <input
+                          type="range"
+                          min="70"
+                          max="130"
+                          value={captureAdjustments.contrast}
+                          onChange={(e) =>
+                            setCaptureAdjustments((current) => ({
+                              ...current,
+                              contrast: Number(e.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="capture-control-row">
+                        <span>Saturation</span>
+                        <input
+                          type="range"
+                          min="70"
+                          max="130"
+                          value={captureAdjustments.saturate}
+                          onChange={(e) =>
+                            setCaptureAdjustments((current) => ({
+                              ...current,
+                              saturate: Number(e.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="capture-control-row">
+                        <span>Zoom</span>
+                        <input
+                          type="range"
+                          min="100"
+                          max="180"
+                          value={captureAdjustments.zoom}
+                          onChange={(e) =>
+                            setCaptureAdjustments((current) => ({
+                              ...current,
+                              zoom: Number(e.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+
+                      <div className="capture-partner-strip">
+                        {PARTNER_LOGOS.map((logo) => (
+                          <img key={logo.alt} src={logo.src} alt={logo.alt} />
+                        ))}
+                      </div>
+
+                      <div className="capture-security-note">
+                        <ShieldCheck size={16} />
+                        Secure preview session. Image is saved only when you click
+                        Apply.
+                      </div>
+
+                      <div className="capture-actions">
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={() =>
+                            setCaptureAdjustments({
+                              brightness: 100,
+                              contrast: 100,
+                              saturate: 100,
+                              zoom: 100,
+                            })
+                          }
+                        >
+                          Reset Adjustments
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={stopLiveCamera}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          onClick={captureLivePhoto}
+                        >
+                          Apply & Save
+                        </button>
+                      </div>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    className="capture-close-btn"
-                    onClick={stopLiveCamera}
-                  >
-                    <X size={18} />
-                  </button>
                 </div>
-
-                <div className="capture-modal-content">
-                  <div className="capture-preview-stage">
-                    <video
-                      ref={cameraModalVideoRef}
-                      autoPlay
-                      playsInline
-                      muted
-                      style={modalPreviewStyle}
-                    />
-                    <div className="capture-target-pill">
-                      Now capturing: {getCaptureTargetLabel()}
-                    </div>
-                  </div>
-
-                  <div className="capture-control-panel">
-                    <h3>
-                      <SlidersHorizontal size={18} /> Fine Tune Capture
-                    </h3>
-                    <label className="capture-control-row">
-                      <span>Brightness</span>
-                      <input
-                        type="range"
-                        min="70"
-                        max="130"
-                        value={captureAdjustments.brightness}
-                        onChange={(e) =>
-                          setCaptureAdjustments((current) => ({
-                            ...current,
-                            brightness: Number(e.target.value),
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="capture-control-row">
-                      <span>Contrast</span>
-                      <input
-                        type="range"
-                        min="70"
-                        max="130"
-                        value={captureAdjustments.contrast}
-                        onChange={(e) =>
-                          setCaptureAdjustments((current) => ({
-                            ...current,
-                            contrast: Number(e.target.value),
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="capture-control-row">
-                      <span>Saturation</span>
-                      <input
-                        type="range"
-                        min="70"
-                        max="130"
-                        value={captureAdjustments.saturate}
-                        onChange={(e) =>
-                          setCaptureAdjustments((current) => ({
-                            ...current,
-                            saturate: Number(e.target.value),
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="capture-control-row">
-                      <span>Zoom</span>
-                      <input
-                        type="range"
-                        min="100"
-                        max="180"
-                        value={captureAdjustments.zoom}
-                        onChange={(e) =>
-                          setCaptureAdjustments((current) => ({
-                            ...current,
-                            zoom: Number(e.target.value),
-                          }))
-                        }
-                      />
-                    </label>
-
-                    <div className="capture-partner-strip">
-                      {PARTNER_LOGOS.map((logo) => (
-                        <img key={logo.alt} src={logo.src} alt={logo.alt} />
-                      ))}
-                    </div>
-
-                    <div className="capture-security-note">
-                      <ShieldCheck size={16} />
-                      Secure preview session. Image is saved only when you click
-                      Apply.
-                    </div>
-
-                    <div className="capture-actions">
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        onClick={() =>
-                          setCaptureAdjustments({
-                            brightness: 100,
-                            contrast: 100,
-                            saturate: 100,
-                            zoom: 100,
-                          })
-                        }
-                      >
-                        Reset Adjustments
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        onClick={stopLiveCamera}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        onClick={captureLivePhoto}
-                      >
-                        Apply & Save
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+              </div>,
+              document.body,
+            )}
 
           {step === 3 && (
             <motion.div
