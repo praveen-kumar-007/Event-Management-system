@@ -108,6 +108,7 @@ export default function UserRegistration() {
   const [aadharBackPreview, setAadharBackPreview] = useState(
     savedRegistrationState.aadharBackPreview,
   );
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeCameraTarget, setActiveCameraTarget] = useState(null);
   const [captureAdjustments, setCaptureAdjustments] = useState({
     brightness: 100,
@@ -442,6 +443,30 @@ export default function UserRegistration() {
     transformOrigin: "center center",
   };
 
+  const dataUrlToFile = async (dataUrl, fileName) => {
+    const response = await fetch(dataUrl);
+    const blob = await response.blob();
+    return new File([blob], fileName, {
+      type: blob.type || "image/jpeg",
+    });
+  };
+
+  const ensureUploadedImage = async (value, label) => {
+    if (!value) return "";
+    if (!value.startsWith("data:")) return value;
+
+    const file = await dataUrlToFile(value, `${label}-${Date.now()}.jpg`);
+    const uploadData = new FormData();
+    uploadData.append("photo", file);
+
+    const uploadResponse = await axios.post(
+      `${API_URL}/api/matches/upload`,
+      uploadData,
+    );
+
+    return uploadResponse.data?.url || value;
+  };
+
   const handleAadharFileUpload = (e, side) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -464,6 +489,7 @@ export default function UserRegistration() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (isSubmitting) return;
 
     const resolvedEventId =
       getPreferredEventId(events) || getActiveEventId() || form.eventId;
@@ -519,10 +545,21 @@ export default function UserRegistration() {
       );
     }
 
+    setIsSubmitting(true);
+
     try {
+      const [photoUrl, aadharFrontUrl, aadharBackUrl] = await Promise.all([
+        ensureUploadedImage(form.photoUrl, "player-photo"),
+        ensureUploadedImage(form.aadharFrontUrl, "aadhar-front"),
+        ensureUploadedImage(form.aadharBackUrl, "aadhar-back"),
+      ]);
+
       const payload = {
         ...submissionForm,
         teamId: matchingTeam.id,
+        photoUrl,
+        aadharFrontUrl,
+        aadharBackUrl,
       };
 
       await axios.post(`${API_URL}/api/matches/players`, payload);
@@ -551,9 +588,10 @@ export default function UserRegistration() {
       setPhotoPreview(null);
       setAadharFrontPreview(null);
       setAadharBackPreview(null);
-      navigate("/dashboard");
     } catch (err) {
       alert("Error: " + (err.response?.data?.error || err.message));
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -1147,9 +1185,14 @@ export default function UserRegistration() {
               </div>
             </div>
 
-            <button className="submit-btn" type="submit">
-              Submit Registration
-              <ChevronRight size={20} />
+            <button
+              className="submit-btn"
+              type="submit"
+              disabled={isSubmitting}
+              aria-busy={isSubmitting}
+            >
+              {isSubmitting ? "Processing..." : "Submit Registration"}
+              {!isSubmitting && <ChevronRight size={20} />}
             </button>
           </form>
 
@@ -1265,8 +1308,8 @@ export default function UserRegistration() {
 
                       <div className="capture-security-note">
                         <ShieldCheck size={16} />
-                        Secure preview session. Image is saved only when you click
-                        Apply.
+                        Secure preview session. Image is saved only when you
+                        click Apply.
                       </div>
 
                       <div className="capture-actions">

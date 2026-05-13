@@ -114,14 +114,7 @@ const RefereeDashboard = () => {
 
   return (
     <div className="animate-fade-in">
-      <header
-        style={{
-          marginBottom: "2rem",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
+      <header className="official-page-header" style={{ marginBottom: "2rem" }}>
         <div>
           <h1 className="title-glow">{roleTitles[role] || "Match Official"}</h1>
           <p style={{ color: "var(--text-muted)" }}>
@@ -141,27 +134,19 @@ const RefereeDashboard = () => {
         </div>
       </header>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 350px",
-          gap: "2rem",
-        }}
-      >
+      <div className="official-layout-grid">
         <div
           className="glass-panel"
           style={{ padding: "0", display: "flex", flexDirection: "column" }}
         >
           {/* Global Header for Match State */}
           <div
+            className="official-score-strip"
             style={{
               background: "rgba(0,0,0,0.4)",
               padding: "1.5rem",
               textAlign: "center",
               borderBottom: "1px solid var(--glass-border)",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
             }}
           >
             <h2 style={{ fontSize: "1.5rem", color: "var(--primary)" }}>
@@ -267,13 +252,7 @@ const RefereeDashboard = () => {
                 >
                   Control: {match.teamAName}
                 </h2>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: "1.5rem",
-                  }}
-                >
+                <div className="official-action-grid">
                   <button
                     className="btn btn-outline"
                     style={{
@@ -326,13 +305,7 @@ const RefereeDashboard = () => {
                 >
                   Control: {match.teamBName}
                 </h2>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: "1.5rem",
-                  }}
-                >
+                <div className="official-action-grid">
                   <button
                     className="btn btn-outline"
                     style={{
@@ -427,13 +400,7 @@ const RefereeDashboard = () => {
                 >
                   Technical Desk
                 </h3>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "center",
-                    gap: "1rem",
-                  }}
-                >
+                <div className="official-action-row">
                   <button className="btn btn-outline">
                     <Pause size={18} /> Official Timeout
                   </button>
@@ -452,13 +419,7 @@ const RefereeDashboard = () => {
                 >
                   Sitting Block & Revival Management
                 </h3>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "center",
-                    gap: "2rem",
-                  }}
-                >
+                <div className="official-action-row">
                   <button
                     className="btn btn-outline"
                     style={{

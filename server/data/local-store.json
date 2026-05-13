@@ -11,7 +11,39 @@
       "createdAt": "2026-05-12T15:32:02.985Z"
     }
   ],
-  "teams": [],
-  "players": [],
+  "teams": [
+    {
+      "id": "id_1778710389165_mmn7nx5",
+      "name": "Dhanbad",
+      "state": "Jharkhand",
+      "district": "Dhanbad",
+      "coach": "Pappu Kumar Yadav",
+      "eventId": "id_1778599923344_i6vdbet",
+      "createdAt": "2026-05-13T22:13:08.478Z"
+    }
+  ],
+  "players": [
+    {
+      "id": "id_1778710511481_ul04ex8",
+      "name": "Jhon",
+      "fatherName": "uuuuuuuuuuuuuu",
+      "email": "jhonquard@gmail.com",
+      "phone": "0000000000",
+      "age": 23,
+      "weight": 52,
+      "position": "Raider",
+      "teamId": "id_1778710389165_mmn7nx5",
+      "district": "Dhanbad",
+      "state": "Jharkhand",
+      "dob": "2003-02-12",
+      "aadhar": "904257368599",
+      "aadharFrontUrl": "https://res.cloudinary.com/ddwjjhpsx/image/upload/v1778710504/kabaddi_players/vi4onvnemgz1qvzonkr2.jpg",
+      "aadharBackUrl": "https://res.cloudinary.com/ddwjjhpsx/image/upload/v1778710504/kabaddi_players/hxr12tdyjikooqe2ixbx.jpg",
+      "photoUrl": "https://res.cloudinary.com/ddwjjhpsx/image/upload/v1778710504/kabaddi_players/bn4efopl5hsfsr3qymuf.jpg",
+      "photoPublicId": "",
+      "eventId": "id_1778599923344_i6vdbet",
+      "createdAt": "2026-05-13T22:15:11.111Z"
+    }
+  ],
   "matches": []
 }

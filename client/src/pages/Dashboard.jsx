@@ -158,9 +158,7 @@ const Dashboard = () => {
         ))}
       </div>
 
-      <div
-        style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "2rem" }}
-      >
+      <div className="dashboard-insights-grid">
         <div className="glass-panel" style={{ padding: "2rem" }}>
           <div
             style={{

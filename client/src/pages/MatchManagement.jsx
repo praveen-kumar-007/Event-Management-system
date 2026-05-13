@@ -72,14 +72,7 @@ const MatchManagement = () => {
           Select an event from sidebar before generating pools and fixtures.
         </div>
       )}
-      <header
-        style={{
-          marginBottom: "2rem",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
+      <header className="match-page-header" style={{ marginBottom: "2rem" }}>
         <div>
           <h1 className="title-glow">
             Pool Match <span className="text-gradient">Generator</span>
@@ -125,14 +118,7 @@ const MatchManagement = () => {
       )}
 
       {pools.A.length > 0 && (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: "2rem",
-            marginBottom: "3rem",
-          }}
-        >
+        <div className="match-pools-grid" style={{ marginBottom: "3rem" }}>
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -231,13 +217,7 @@ const MatchManagement = () => {
           >
             <Calendar color="var(--accent)" /> Official Fixtures Schedule
           </h2>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(400px, 1fr))",
-              gap: "1.5rem",
-            }}
-          >
+          <div className="fixtures-grid">
             {fixtures.map((f, i) => (
               <div
                 key={i}
@@ -287,7 +267,10 @@ const MatchManagement = () => {
                     fontSize: "1.2rem",
                   }}
                 >
-                  <div style={{ flex: 1, textAlign: "center" }}>
+                  <div
+                    className="fixture-team-name"
+                    style={{ flex: 1, textAlign: "center" }}
+                  >
                     {f.teamAName}
                   </div>
                   <div
@@ -301,7 +284,10 @@ const MatchManagement = () => {
                   >
                     <Swords size={20} />
                   </div>
-                  <div style={{ flex: 1, textAlign: "center" }}>
+                  <div
+                    className="fixture-team-name"
+                    style={{ flex: 1, textAlign: "center" }}
+                  >
                     {f.teamBName}
                   </div>
                 </div>

@@ -1327,8 +1327,8 @@ const Registration = () => {
 
                       <div className="capture-security-note">
                         <ShieldCheck size={16} />
-                        Secure preview session. Image is saved only when you click
-                        Apply.
+                        Secure preview session. Image is saved only when you
+                        click Apply.
                       </div>
 
                       <div className="capture-actions">
