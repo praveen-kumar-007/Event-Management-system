@@ -307,7 +307,7 @@ export default function UserRegistration() {
     }
 
     try {
-      await axios.post(`${API_URL}/api/player-registration`, form);
+      await axios.post(`${API_URL}/api/player-registration`, submissionForm);
 
       alert("Registration submitted successfully! Awaiting admin approval.");
 
