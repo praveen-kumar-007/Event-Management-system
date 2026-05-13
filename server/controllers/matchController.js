@@ -1,5 +1,19 @@
-const { db } = require("../config/firebase");
+const {
+  db,
+  isFirestoreAvailable,
+  markFirestoreUnavailable,
+} = require("../config/firebase");
 const { generateFixtures: genFix } = require("../utils/fixtureGenerator");
+const {
+  cacheDel,
+  cacheFlushPrefix,
+  cacheGet,
+  cacheSet,
+  makeKey,
+} = require("../utils/cache");
+const {
+  deleteCloudinaryAssetsFromRecord,
+} = require("../utils/cloudinaryCleanup");
 const {
   getAllStates,
   getDistricts,
@@ -131,6 +145,60 @@ const findDistrictForState = (state, districtName) => {
 const ensureEventInMemory = (eventId) =>
   memoryDB.events.some((event) => event.id === eventId);
 
+const invalidateDataCaches = async (eventId) => {
+  const keys = [
+    makeKey("events", "all"),
+    makeKey("teams", "all"),
+    makeKey("players", "all"),
+    makeKey("matches", "all"),
+    makeKey("stats", "all"),
+    makeKey("live", "all"),
+    makeKey("location", "options"),
+  ];
+
+  if (eventId) {
+    keys.push(
+      makeKey("teams", eventId),
+      makeKey("players", eventId),
+      makeKey("matches", eventId),
+      makeKey("stats", eventId),
+      makeKey("live", eventId),
+    );
+  }
+
+  await cacheDel(keys);
+};
+
+const readOrFetch = async ({
+  cacheKey,
+  ttl = 60,
+  fallback,
+  firestoreFetch,
+}) => {
+  const cachedValue = await cacheGet(cacheKey);
+  if (cachedValue !== undefined) {
+    return cachedValue;
+  }
+
+  if (isFirestoreAvailable()) {
+    try {
+      const firestoreValue = await firestoreFetch();
+      await cacheSet(cacheKey, firestoreValue, ttl);
+      return firestoreValue;
+    } catch (error) {
+      markFirestoreUnavailable(error);
+      console.error(
+        "Firestore access failed, switching to memory fallback:",
+        error.message,
+      );
+    }
+  }
+
+  const fallbackValue = await fallback();
+  await cacheSet(cacheKey, fallbackValue, ttl);
+  return fallbackValue;
+};
+
 // Location and metadata
 const getLocationOptions = (_req, res) => {
   res.json(locationData);
@@ -143,13 +211,35 @@ const detectLocationFromIp = async (req, res) => {
     normalizeString(req.ip).replace("::ffff:", "");
 
   try {
+    const cacheKey = makeKey("location", "detect", requestIp || "local");
+    const cached = await cacheGet(cacheKey);
+    if (cached !== undefined) {
+      return res.json(cached);
+    }
+
     const endpoint =
       requestIp && requestIp !== "::1" && requestIp !== "127.0.0.1"
         ? `https://ipapi.co/${encodeURIComponent(requestIp)}/json/`
         : "https://ipapi.co/json/";
 
     const response = await fetch(endpoint, { method: "GET" });
-    const payload = await response.json();
+    const contentType = response.headers.get("content-type") || "";
+    const rawBody = await response.text();
+
+    let payload = {};
+    if (contentType.includes("application/json")) {
+      try {
+        payload = JSON.parse(rawBody);
+      } catch (parseError) {
+        throw new Error(
+          `Invalid JSON response from location service: ${parseError.message}`,
+        );
+      }
+    } else {
+      throw new Error(
+        rawBody.slice(0, 120) || "Unexpected location service response",
+      );
+    }
 
     const guessedState = findClosestState(
       payload.region || payload.region_name || getCurrentState() || "",
@@ -159,13 +249,16 @@ const detectLocationFromIp = async (req, res) => {
       payload.city_district || payload.city || payload.district || "",
     );
 
-    res.json({
+    const result = {
       ip: payload.ip || requestIp || "",
       state: guessedState,
       district: guessedDistrict,
       city: payload.city || "",
       source: "ipapi",
-    });
+    };
+
+    await cacheSet(cacheKey, result, 3600);
+    res.json(result);
   } catch (error) {
     console.error("IP location lookup failed:", error.message);
     res.json({
@@ -179,26 +272,28 @@ const detectLocationFromIp = async (req, res) => {
 
 // Events
 const getEvents = async (_req, res) => {
-  try {
-    if (!db) throw new Error("Database not initialized");
-    const snapshot = await db
-      .collection("events")
-      .orderBy("createdAt", "desc")
-      .get();
-    const events = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    res.json(events);
-  } catch (error) {
-    console.error(
-      "Firestore Error in getEvents, using memory fallback:",
-      error.message,
-    );
-    memoryDB = readFallbackStore();
-    const events = [...memoryDB.events].sort(
-      (a, b) =>
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    );
-    res.json(events);
-  }
+  const cacheKey = makeKey("events", "all");
+  const events = await readOrFetch({
+    cacheKey,
+    ttl: 30,
+    firestoreFetch: async () => {
+      if (!db) throw new Error("Database not initialized");
+      const snapshot = await db
+        .collection("events")
+        .orderBy("createdAt", "desc")
+        .get();
+      return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    },
+    fallback: async () => {
+      memoryDB = readFallbackStore();
+      return [...memoryDB.events].sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
+    },
+  });
+
+  res.json(events);
 };
 
 const addEvent = async (req, res) => {
@@ -229,6 +324,7 @@ const addEvent = async (req, res) => {
         .forEach((doc) => batch.update(doc.ref, { isActive: false }));
       await batch.commit();
     }
+    await invalidateDataCaches();
     res.status(201).json({ id: docRef.id, ...event });
   } catch (error) {
     console.error(
@@ -246,6 +342,7 @@ const addEvent = async (req, res) => {
       store.events.push(newEvent);
       return store;
     });
+    await invalidateDataCaches();
     res.status(201).json(newEvent);
   }
 };
@@ -288,6 +385,7 @@ const updateEvent = async (req, res) => {
       await batch.commit();
     }
 
+    await invalidateDataCaches(id);
     res.json({ success: true });
   } catch (error) {
     console.error(
@@ -320,6 +418,7 @@ const updateEvent = async (req, res) => {
       return store;
     });
     if (!updated) return res.status(404).json({ error: "Event not found." });
+    await invalidateDataCaches(id);
     res.json({ success: true });
   }
 };
@@ -343,12 +442,31 @@ const deleteEvent = async (req, res) => {
       ],
     );
 
+    await Promise.all([
+      ...teamsSnapshot.docs.map((doc) =>
+        deleteCloudinaryAssetsFromRecord(doc.data(), [
+          "logoUrl",
+          "imageUrl",
+          "photoUrl",
+        ]),
+      ),
+      ...playersSnapshot.docs.map((doc) =>
+        deleteCloudinaryAssetsFromRecord(doc.data(), [
+          "photoUrl",
+          "aadharFrontUrl",
+          "aadharBackUrl",
+        ]),
+      ),
+    ]);
+
     const batch = db.batch();
     teamsSnapshot.docs.forEach((doc) => batch.delete(doc.ref));
     playersSnapshot.docs.forEach((doc) => batch.delete(doc.ref));
     matchesSnapshot.docs.forEach((doc) => batch.delete(doc.ref));
     batch.delete(eventRef);
     await batch.commit();
+
+    await invalidateDataCaches(id);
 
     res.json({ success: true });
   } catch (error) {
@@ -368,6 +486,7 @@ const deleteEvent = async (req, res) => {
       return store;
     });
     if (!deleted) return res.status(404).json({ error: "Event not found." });
+    await invalidateDataCaches(id);
     res.json({ success: true });
   }
 };
@@ -384,6 +503,7 @@ const activateEvent = async (req, res) => {
     snapshot.docs.forEach((doc) => batch.update(doc.ref, { isActive: false }));
     batch.update(db.collection("events").doc(id), { isActive: true });
     await batch.commit();
+    await invalidateDataCaches();
     res.json({ success: true });
   } catch (error) {
     console.error(
@@ -397,6 +517,7 @@ const activateEvent = async (req, res) => {
       }));
       return store;
     });
+    await invalidateDataCaches();
     res.json({ success: true });
   }
 };
@@ -404,24 +525,26 @@ const activateEvent = async (req, res) => {
 // Teams
 const getTeams = async (req, res) => {
   const eventId = normalizeString(req.query.eventId);
-  try {
-    if (!db) throw new Error("Database not initialized");
-    let query = db.collection("teams");
-    if (eventId) query = query.where("eventId", "==", eventId);
-    const snapshot = await query.get();
-    const teams = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    res.json(teams);
-  } catch (error) {
-    console.error(
-      "Firestore Error in getTeams, using memory fallback:",
-      error.message,
-    );
-    memoryDB = readFallbackStore();
-    const teams = eventId
-      ? memoryDB.teams.filter((team) => team.eventId === eventId)
-      : memoryDB.teams;
-    res.json(teams);
-  }
+  const cacheKey = makeKey("teams", eventId || "all");
+  const teams = await readOrFetch({
+    cacheKey,
+    ttl: 30,
+    firestoreFetch: async () => {
+      if (!db) throw new Error("Database not initialized");
+      let query = db.collection("teams");
+      if (eventId) query = query.where("eventId", "==", eventId);
+      const snapshot = await query.get();
+      return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    },
+    fallback: async () => {
+      memoryDB = readFallbackStore();
+      return eventId
+        ? memoryDB.teams.filter((team) => team.eventId === eventId)
+        : memoryDB.teams;
+    },
+  });
+
+  res.json(teams);
 };
 
 const addTeam = async (req, res) => {
@@ -450,6 +573,7 @@ const addTeam = async (req, res) => {
     if (!eventDoc.exists)
       return res.status(400).json({ error: "Selected event does not exist." });
     const docRef = await db.collection("teams").add(team);
+    await invalidateDataCaches(eventId);
     res.status(201).json({ id: docRef.id, ...team });
   } catch (error) {
     console.error(
@@ -464,6 +588,7 @@ const addTeam = async (req, res) => {
       store.teams.push(newTeam);
       return store;
     });
+    await invalidateDataCaches(eventId);
     res.status(201).json(newTeam);
   }
 };
@@ -485,6 +610,7 @@ const updateTeam = async (req, res) => {
       return res.status(404).json({ error: "Team not found." });
     }
     await teamRef.update(updates);
+    await invalidateDataCaches();
     res.json({ success: true });
   } catch (error) {
     console.error(
@@ -500,6 +626,7 @@ const updateTeam = async (req, res) => {
       return store;
     });
     if (!updated) return res.status(404).json({ error: "Team not found." });
+    await invalidateDataCaches();
     res.json({ success: true });
   }
 };
@@ -520,11 +647,24 @@ const deleteTeam = async (req, res) => {
       db.collection("matches").where("teamIds", "array-contains", id).get(),
     ]);
 
+    await Promise.all([
+      deleteCloudinaryAssetsFromRecord(teamDoc.data(), ["logoUrl", "imageUrl"]),
+      ...playersSnapshot.docs.map((doc) =>
+        deleteCloudinaryAssetsFromRecord(doc.data(), [
+          "photoUrl",
+          "aadharFrontUrl",
+          "aadharBackUrl",
+        ]),
+      ),
+    ]);
+
     const batch = db.batch();
     playersSnapshot.docs.forEach((doc) => batch.delete(doc.ref));
     matchesSnapshot.docs.forEach((doc) => batch.delete(doc.ref));
     batch.delete(teamRef);
     await batch.commit();
+
+    await invalidateDataCaches();
 
     res.json({ success: true });
   } catch (error) {
@@ -545,6 +685,7 @@ const deleteTeam = async (req, res) => {
       return store;
     });
     if (!deleted) return res.status(404).json({ error: "Team not found." });
+    await invalidateDataCaches();
     res.json({ success: true });
   }
 };
@@ -552,24 +693,26 @@ const deleteTeam = async (req, res) => {
 // Players
 const getPlayers = async (req, res) => {
   const eventId = normalizeString(req.query.eventId);
-  try {
-    if (!db) throw new Error("Database not initialized");
-    let query = db.collection("players");
-    if (eventId) query = query.where("eventId", "==", eventId);
-    const snapshot = await query.get();
-    const players = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    res.json(players);
-  } catch (error) {
-    console.error(
-      "Firestore Error in getPlayers, using memory fallback:",
-      error.message,
-    );
-    memoryDB = readFallbackStore();
-    const players = eventId
-      ? memoryDB.players.filter((player) => player.eventId === eventId)
-      : memoryDB.players;
-    res.json(players);
-  }
+  const cacheKey = makeKey("players", eventId || "all");
+  const players = await readOrFetch({
+    cacheKey,
+    ttl: 30,
+    firestoreFetch: async () => {
+      if (!db) throw new Error("Database not initialized");
+      let query = db.collection("players");
+      if (eventId) query = query.where("eventId", "==", eventId);
+      const snapshot = await query.get();
+      return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    },
+    fallback: async () => {
+      memoryDB = readFallbackStore();
+      return eventId
+        ? memoryDB.players.filter((player) => player.eventId === eventId)
+        : memoryDB.players;
+    },
+  });
+
+  res.json(players);
 };
 
 const addPlayer = async (req, res) => {
@@ -579,15 +722,21 @@ const addPlayer = async (req, res) => {
 
   const player = {
     name: normalizeString(req.body.name),
+    fatherName: normalizeString(req.body.fatherName),
     email: normalizeString(req.body.email).toLowerCase(),
     phone: normalizePhone(req.body.phone),
     age: Number(req.body.age),
     weight: Number(req.body.weight),
     position: normalizeString(req.body.position),
     teamId: normalizeString(req.body.teamId),
+    district: normalizeString(req.body.district),
+    state: normalizeString(req.body.state),
     dob: normalizeString(req.body.dob),
     aadhar: normalizeString(req.body.aadhar),
+    aadharFrontUrl: normalizeString(req.body.aadharFrontUrl),
+    aadharBackUrl: normalizeString(req.body.aadharBackUrl),
     photoUrl: normalizeString(req.body.photoUrl),
+    photoPublicId: normalizeString(req.body.photoPublicId),
     eventId,
     createdAt: new Date().toISOString(),
   };
@@ -617,6 +766,7 @@ const addPlayer = async (req, res) => {
         .json({ error: "Selected team is not part of this event." });
     }
     const docRef = await db.collection("players").add(player);
+    await invalidateDataCaches(eventId);
     res.status(201).json({ id: docRef.id, ...player });
   } catch (error) {
     console.error(
@@ -635,6 +785,7 @@ const addPlayer = async (req, res) => {
       store.players.push(newPlayer);
       return store;
     });
+    await invalidateDataCaches(eventId);
     res.status(201).json(newPlayer);
   }
 };
@@ -643,15 +794,21 @@ const updatePlayer = async (req, res) => {
   const { id } = req.params;
   const updates = {
     name: normalizeString(req.body.name),
+    fatherName: normalizeString(req.body.fatherName),
     email: normalizeString(req.body.email).toLowerCase(),
     phone: normalizePhone(req.body.phone),
     age: req.body.age === undefined ? undefined : Number(req.body.age),
     weight: req.body.weight === undefined ? undefined : Number(req.body.weight),
     position: normalizeString(req.body.position),
     teamId: normalizeString(req.body.teamId),
+    district: normalizeString(req.body.district),
+    state: normalizeString(req.body.state),
     dob: normalizeString(req.body.dob),
     aadhar: normalizeString(req.body.aadhar),
+    aadharFrontUrl: normalizeString(req.body.aadharFrontUrl),
+    aadharBackUrl: normalizeString(req.body.aadharBackUrl),
     photoUrl: normalizeString(req.body.photoUrl),
+    photoPublicId: normalizeString(req.body.photoPublicId),
   };
 
   if (updates.email && !/^\S+@\S+\.\S+$/.test(updates.email)) {
@@ -678,6 +835,25 @@ const updatePlayer = async (req, res) => {
       ),
     );
     await playerRef.update(payload);
+    await deleteCloudinaryAssetsFromRecord(playerDoc.data(), [
+      ...(payload.photoUrl !== undefined &&
+      payload.photoUrl !== playerDoc.data()?.photoUrl
+        ? ["photoUrl"]
+        : []),
+      ...(payload.photoPublicId !== undefined &&
+      payload.photoPublicId !== playerDoc.data()?.photoPublicId
+        ? ["photoPublicId"]
+        : []),
+      ...(payload.aadharFrontUrl !== undefined &&
+      payload.aadharFrontUrl !== playerDoc.data()?.aadharFrontUrl
+        ? ["aadharFrontUrl"]
+        : []),
+      ...(payload.aadharBackUrl !== undefined &&
+      payload.aadharBackUrl !== playerDoc.data()?.aadharBackUrl
+        ? ["aadharBackUrl"]
+        : []),
+    ]);
+    await invalidateDataCaches();
     res.json({ success: true });
   } catch (error) {
     console.error(
@@ -693,6 +869,7 @@ const updatePlayer = async (req, res) => {
       return store;
     });
     if (!updated) return res.status(404).json({ error: "Player not found." });
+    await invalidateDataCaches();
     res.json({ success: true });
   }
 };
@@ -701,7 +878,19 @@ const deletePlayer = async (req, res) => {
   const { id } = req.params;
   try {
     if (!db) throw new Error("Firestore Database not initialized.");
-    await db.collection("players").doc(id).delete();
+    const playerRef = db.collection("players").doc(id);
+    const playerDoc = await playerRef.get();
+    if (!playerDoc.exists) {
+      return res.status(404).json({ error: "Player not found." });
+    }
+    await deleteCloudinaryAssetsFromRecord(playerDoc.data(), [
+      "photoUrl",
+      "photoPublicId",
+      "aadharFrontUrl",
+      "aadharBackUrl",
+    ]);
+    await playerRef.delete();
+    await invalidateDataCaches();
     res.json({ success: true });
   } catch (error) {
     console.error(
@@ -713,6 +902,7 @@ const deletePlayer = async (req, res) => {
       store.players = store.players.filter((player) => player.id !== id);
       return store;
     });
+    await invalidateDataCaches();
     res.json({ success: before !== memoryDB.players.length });
   }
 };
@@ -754,6 +944,7 @@ const generateFixtures = async (req, res) => {
       });
     });
     await batch.commit();
+    await invalidateDataCaches(eventId);
     res.json({ fixtures });
   } catch (error) {
     console.error(
@@ -770,30 +961,33 @@ const generateFixtures = async (req, res) => {
       store.matches.push(...payload);
       return store;
     });
+    await invalidateDataCaches(eventId);
     res.json({ fixtures: payload });
   }
 };
 
 const getMatches = async (req, res) => {
   const eventId = normalizeString(req.query.eventId);
-  try {
-    if (!db) throw new Error("Database not initialized");
-    let query = db.collection("matches");
-    if (eventId) query = query.where("eventId", "==", eventId);
-    const snapshot = await query.get();
-    const matches = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    res.json(matches);
-  } catch (error) {
-    console.error(
-      "Firestore Error in getMatches, using memory fallback:",
-      error.message,
-    );
-    memoryDB = readFallbackStore();
-    const matches = eventId
-      ? memoryDB.matches.filter((match) => match.eventId === eventId)
-      : memoryDB.matches;
-    res.json(matches);
-  }
+  const cacheKey = makeKey("matches", eventId || "all");
+  const matches = await readOrFetch({
+    cacheKey,
+    ttl: 30,
+    firestoreFetch: async () => {
+      if (!db) throw new Error("Database not initialized");
+      let query = db.collection("matches");
+      if (eventId) query = query.where("eventId", "==", eventId);
+      const snapshot = await query.get();
+      return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    },
+    fallback: async () => {
+      memoryDB = readFallbackStore();
+      return eventId
+        ? memoryDB.matches.filter((match) => match.eventId === eventId)
+        : memoryDB.matches;
+    },
+  });
+
+  res.json(matches);
 };
 
 const updateMatch = async (req, res) => {
@@ -801,6 +995,7 @@ const updateMatch = async (req, res) => {
   try {
     if (!db) throw new Error("Firestore Database not initialized.");
     await db.collection("matches").doc(id).update(req.body);
+    await invalidateDataCaches();
     res.json({ success: true });
   } catch (error) {
     console.error(
@@ -814,6 +1009,7 @@ const updateMatch = async (req, res) => {
       }
       return store;
     });
+    await invalidateDataCaches();
     res.json({ success: true });
   }
 };
@@ -828,6 +1024,7 @@ const deleteMatch = async (req, res) => {
       return res.status(404).json({ error: "Match not found." });
     }
     await matchRef.delete();
+    await invalidateDataCaches();
     res.json({ success: true });
   } catch (error) {
     console.error(
@@ -843,108 +1040,117 @@ const deleteMatch = async (req, res) => {
       return store;
     });
     if (!deleted) return res.status(404).json({ error: "Match not found." });
+    await invalidateDataCaches();
     res.json({ success: true });
   }
 };
 
 const getLiveMatch = async (req, res) => {
   const eventId = normalizeString(req.query.eventId);
-  try {
-    if (!db) throw new Error("Database not initialized");
-    let query = db.collection("matches").orderBy("createdAt", "desc");
-    if (eventId) query = query.where("eventId", "==", eventId);
-    const snapshot = await query.limit(1).get();
-    if (snapshot.empty) return res.status(404).json({ error: "No matches" });
-    res.json({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() });
-  } catch (error) {
-    console.error(
-      "Firestore Error in getLiveMatch, using memory fallback:",
-      error.message,
-    );
-    memoryDB = readFallbackStore();
-    const matches = eventId
-      ? memoryDB.matches.filter((match) => match.eventId === eventId)
-      : memoryDB.matches;
-    if (!matches.length)
-      return res.status(404).json({ error: "No matches available" });
-    res.json(matches[matches.length - 1]);
-  }
+  const cacheKey = makeKey("live", eventId || "all");
+  const liveMatch = await readOrFetch({
+    cacheKey,
+    ttl: 15,
+    firestoreFetch: async () => {
+      if (!db) throw new Error("Database not initialized");
+      let query = db.collection("matches").orderBy("createdAt", "desc");
+      if (eventId) query = query.where("eventId", "==", eventId);
+      const snapshot = await query.limit(1).get();
+      if (snapshot.empty) return null;
+      return { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
+    },
+    fallback: async () => {
+      memoryDB = readFallbackStore();
+      const matches = eventId
+        ? memoryDB.matches.filter((match) => match.eventId === eventId)
+        : memoryDB.matches;
+      if (!matches.length) return null;
+      return matches[matches.length - 1];
+    },
+  });
+
+  if (!liveMatch)
+    return res.status(404).json({ error: "No matches available" });
+  res.json(liveMatch);
 };
 
 // Stats
 const getStats = async (req, res) => {
   const eventId = normalizeString(req.query.eventId);
-  try {
-    if (!db) throw new Error("Database not initialized");
+  const cacheKey = makeKey("stats", eventId || "all");
+  const stats = await readOrFetch({
+    cacheKey,
+    ttl: 30,
+    firestoreFetch: async () => {
+      if (!db) throw new Error("Database not initialized");
 
-    if (!eventId) {
-      const [events, teams, players, matches] = await Promise.all([
-        db.collection("events").count().get(),
-        db.collection("teams").count().get(),
-        db.collection("players").count().get(),
-        db.collection("matches").count().get(),
-      ]);
+      if (!eventId) {
+        const [events, teams, players, matches] = await Promise.all([
+          db.collection("events").count().get(),
+          db.collection("teams").count().get(),
+          db.collection("players").count().get(),
+          db.collection("matches").count().get(),
+        ]);
 
-      const teamDocs = await db.collection("teams").get();
+        const teamDocs = await db.collection("teams").get();
+        const districts = new Set(
+          teamDocs.docs.map((doc) => doc.data().district).filter(Boolean),
+        );
+
+        return {
+          events: events.data().count,
+          teams: teams.data().count,
+          players: players.data().count,
+          matches: matches.data().count,
+          districts: districts.size,
+        };
+      }
+
+      const [teamsSnapshot, playersSnapshot, matchesSnapshot] =
+        await Promise.all([
+          db.collection("teams").where("eventId", "==", eventId).get(),
+          db.collection("players").where("eventId", "==", eventId).get(),
+          db.collection("matches").where("eventId", "==", eventId).get(),
+        ]);
+
       const districts = new Set(
-        teamDocs.docs.map((doc) => doc.data().district).filter(Boolean),
+        teamsSnapshot.docs.map((doc) => doc.data().district).filter(Boolean),
       );
 
-      return res.json({
-        events: events.data().count,
-        teams: teams.data().count,
-        players: players.data().count,
-        matches: matches.data().count,
+      return {
+        events: 1,
+        teams: teamsSnapshot.size,
+        players: playersSnapshot.size,
+        matches: matchesSnapshot.size,
         districts: districts.size,
-      });
-    }
+      };
+    },
+    fallback: async () => {
+      memoryDB = readFallbackStore();
+      const teams = eventId
+        ? memoryDB.teams.filter((entry) => entry.eventId === eventId)
+        : memoryDB.teams;
+      const players = eventId
+        ? memoryDB.players.filter((entry) => entry.eventId === eventId)
+        : memoryDB.players;
+      const matches = eventId
+        ? memoryDB.matches.filter((entry) => entry.eventId === eventId)
+        : memoryDB.matches;
+      const districts = new Set(
+        teams.map((entry) => entry.district).filter(Boolean),
+      );
 
-    const [teamsSnapshot, playersSnapshot, matchesSnapshot] = await Promise.all(
-      [
-        db.collection("teams").where("eventId", "==", eventId).get(),
-        db.collection("players").where("eventId", "==", eventId).get(),
-        db.collection("matches").where("eventId", "==", eventId).get(),
-      ],
-    );
+      return {
+        events: eventId ? 1 : memoryDB.events.length,
+        teams: teams.length,
+        players: players.length,
+        matches: matches.length,
+        districts: districts.size,
+      };
+    },
+  });
 
-    const districts = new Set(
-      teamsSnapshot.docs.map((doc) => doc.data().district).filter(Boolean),
-    );
-
-    return res.json({
-      events: 1,
-      teams: teamsSnapshot.size,
-      players: playersSnapshot.size,
-      matches: matchesSnapshot.size,
-      districts: districts.size,
-    });
-  } catch (error) {
-    console.error(
-      "Firestore Error in getStats, using memory fallback:",
-      error.message,
-    );
-    memoryDB = readFallbackStore();
-    const teams = eventId
-      ? memoryDB.teams.filter((entry) => entry.eventId === eventId)
-      : memoryDB.teams;
-    const players = eventId
-      ? memoryDB.players.filter((entry) => entry.eventId === eventId)
-      : memoryDB.players;
-    const matches = eventId
-      ? memoryDB.matches.filter((entry) => entry.eventId === eventId)
-      : memoryDB.matches;
-    const districts = new Set(
-      teams.map((entry) => entry.district).filter(Boolean),
-    );
-
-    res.json({
-      events: eventId ? 1 : memoryDB.events.length,
-      teams: teams.length,
-      players: players.length,
-      matches: matches.length,
-      districts: districts.size,
-    });
-  }
+  res.json(stats);
 };
 
 module.exports = {

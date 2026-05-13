@@ -1,7 +1,14 @@
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  useLocation,
+} from "react-router-dom";
 import Sidebar from "./components/Sidebar";
+import BrandingBar from "./components/BrandingBar";
 import Dashboard from "./pages/Dashboard";
 import Registration from "./pages/Registration";
+import UserRegistration from "./pages/UserRegistration";
 import Roster from "./pages/Roster";
 import MatchManagement from "./pages/MatchManagement";
 import RefereeDashboard from "./pages/RefereeDashboard";
@@ -11,14 +18,19 @@ import OfficialScoreSheet from "./pages/OfficialScoreSheet";
 import EventManagement from "./pages/EventManagement";
 import "./index.css";
 
-function App() {
+function AppRouter() {
+  const location = useLocation();
+  const hideSidebar = location.pathname === "/";
+
   return (
-    <Router>
+    <>
+      <BrandingBar />
       <div className="app-layout">
-        <Sidebar />
+        {!hideSidebar && <Sidebar />}
         <main className="main-content">
           <Routes>
-            <Route path="/" element={<Dashboard />} />
+            <Route path="/" element={<UserRegistration />} />
+            <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/events" element={<EventManagement />} />
             <Route path="/roster" element={<Roster />} />
             <Route path="/registration" element={<Registration />} />
@@ -30,6 +42,14 @@ function App() {
           </Routes>
         </main>
       </div>
+    </>
+  );
+}
+
+function App() {
+  return (
+    <Router>
+      <AppRouter />
     </Router>
   );
 }

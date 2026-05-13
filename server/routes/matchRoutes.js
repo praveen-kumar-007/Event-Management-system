@@ -34,7 +34,10 @@ router.post("/upload", upload.single("photo"), (req, res) => {
   const url = hasCloudinaryConfig
     ? req.file.path
     : `${req.protocol}://${req.get("host")}/uploads/${req.file.filename}`;
-  res.json({ url });
+  res.json({
+    url,
+    publicId: hasCloudinaryConfig ? req.file.filename || null : null,
+  });
 });
 
 module.exports = router;

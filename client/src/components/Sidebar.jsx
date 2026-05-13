@@ -58,7 +58,8 @@ const Sidebar = () => {
 
   const adminLinks = [
     { to: "/events", icon: CalendarRange, label: "Event Management" },
-    { to: "/", icon: LayoutDashboard, label: "Analytics Hub" },
+    { to: "/dashboard", icon: LayoutDashboard, label: "Analytics Hub" },
+    { to: "/", icon: Users, label: "User Registration" },
     { to: "/roster", icon: Database, label: "Teams & Roster" },
     { to: "/registration", icon: Users, label: "Registration Portal" },
     { to: "/matches", icon: Trophy, label: "Pool Match Fixings" },

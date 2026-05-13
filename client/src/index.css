@@ -768,3 +768,123 @@ select optgroup {
     justify-content: flex-start;
   }
 }
+
+@media (max-width: 640px) {
+  .app-layout {
+    flex-direction: column;
+    min-height: 100dvh;
+    height: auto;
+  }
+
+  .sidebar {
+    width: 100%;
+    padding: 1rem;
+    border-right: none;
+    border-bottom: 1px solid var(--glass-border);
+    position: sticky;
+    top: 0;
+    z-index: 60;
+    max-height: 100dvh;
+    overflow: auto;
+  }
+
+  .sidebar > div[style*='marginBottom: "3rem"'] {
+    margin-bottom: 1.25rem !important;
+  }
+
+  .sidebar nav {
+    gap: 0.35rem !important;
+  }
+
+  .nav-link {
+    padding: 0.8rem 0.9rem;
+    font-size: 0.95rem;
+  }
+
+  .main-content {
+    padding: 1rem;
+    width: 100%;
+  }
+
+  .data-grid,
+  .ops-grid,
+  .management-grid,
+  .admin-block,
+  .two-column,
+  .footer-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .glass-panel {
+    border-radius: 16px;
+  }
+
+  .title-glow {
+    font-size: clamp(1.9rem, 8vw, 2.6rem);
+    line-height: 1.05;
+  }
+
+  .score-value {
+    font-size: clamp(4rem, 18vw, 6rem);
+  }
+
+  .timer-value {
+    font-size: clamp(2.6rem, 12vw, 4rem);
+  }
+
+  .btn {
+    width: 100%;
+  }
+
+  .form-control {
+    padding: 0.9rem 1rem;
+    font-size: 16px;
+  }
+
+  .data-grid {
+    gap: 1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  body {
+    background-attachment: scroll;
+  }
+
+  .sidebar {
+    padding: 0.85rem;
+  }
+
+  .main-content {
+    padding: 0.85rem;
+  }
+
+  .glass-panel {
+    border-radius: 14px;
+  }
+
+  .title-glow {
+    font-size: 1.8rem;
+  }
+
+  .badge {
+    padding: 0.3rem 0.6rem;
+  }
+
+  .form-label {
+    font-size: 0.78rem;
+  }
+
+  .btn {
+    padding: 0.8rem 1rem;
+    font-size: 0.92rem;
+  }
+
+  .data-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .nav-link {
+    gap: 0.75rem;
+  }
+}

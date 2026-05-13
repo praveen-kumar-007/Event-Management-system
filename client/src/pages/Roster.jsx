@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import {
   Search,
@@ -8,9 +8,19 @@ import {
   Shield,
   Trash2,
   Plus,
+  Camera,
+  Upload,
 } from "lucide-react";
 import { motion } from "framer-motion";
-import { EVENT_CHANGE_EVENT, getActiveEventId } from "../utils/eventSelection";
+import {
+  EVENT_CHANGE_EVENT,
+  getActiveEventId,
+  setActiveEventId,
+} from "../utils/eventSelection";
+import {
+  buildPlayerPayload,
+  validatePlayerIdentity,
+} from "../utils/playerValidation";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
@@ -18,7 +28,14 @@ const Roster = () => {
   const [eventId, setEventId] = useState(getActiveEventId());
   const [teams, setTeams] = useState([]);
   const [players, setPlayers] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [allPlayers, setAllPlayers] = useState([]);
+  const [events, setEvents] = useState([]);
+  const [states, setStates] = useState([]);
+  const [districtsByState, setDistrictsByState] = useState({});
+  const [allDistricts, setAllDistricts] = useState([]);
+  const [geoNotice, setGeoNotice] = useState("");
+  const [photoPreview, setPhotoPreview] = useState(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingPlayerId, setEditingPlayerId] = useState("");
   const [showTeamForm, setShowTeamForm] = useState(false);
@@ -34,6 +51,7 @@ const Roster = () => {
     dob: "",
     aadhar: "",
     photoUrl: "",
+    photoPublicId: "",
   });
   const [newTeam, setNewTeam] = useState({
     name: "",
@@ -41,34 +59,98 @@ const Roster = () => {
     district: "",
     coach: "",
   });
-
-  // Filters
   const [search, setSearch] = useState("");
   const [districtFilter, setDistrictFilter] = useState("All");
   const [positionFilter, setPositionFilter] = useState("All");
+  const videoRef = useRef(null);
+  const cameraStreamRef = useRef(null);
+
+  const districtOptions = useMemo(() => {
+    if (newTeam.state && Array.isArray(districtsByState[newTeam.state])) {
+      return districtsByState[newTeam.state];
+    }
+    return allDistricts;
+  }, [newTeam.state, districtsByState, allDistricts]);
+
+  useEffect(() => {
+    return () => {
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const fetchMeta = async () => {
+      try {
+        const [eventsRes, locationRes, detectRes] = await Promise.all([
+          axios.get(`${API_URL}/api/matches/events`),
+          axios.get(`${API_URL}/api/matches/location/options`),
+          axios.get(`${API_URL}/api/matches/location/detect`),
+        ]);
+
+        const eventsData = Array.isArray(eventsRes.data) ? eventsRes.data : [];
+        const locationData = locationRes.data || {};
+        const detectData = detectRes.data || {};
+
+        setEvents(eventsData);
+        setStates(
+          Array.isArray(locationData.states) ? locationData.states : [],
+        );
+        setDistrictsByState(locationData.districtsByState || {});
+        setAllDistricts(
+          Array.isArray(locationData.allDistricts)
+            ? locationData.allDistricts
+            : [],
+        );
+
+        if (detectData.state || detectData.district) {
+          setGeoNotice(
+            "State and district were auto-detected from your IP. You can change them.",
+          );
+        }
+
+        const fromStorage = getActiveEventId();
+        const selectedEvent =
+          eventsData.find((entry) => entry.id === fromStorage) ||
+          eventsData.find((entry) => entry.isActive) ||
+          eventsData[0];
+
+        if (selectedEvent?.id) {
+          setActiveEventId(selectedEvent.id);
+          setEventId(selectedEvent.id);
+        }
+      } catch (err) {
+        console.error("Failed to fetch roster metadata", err);
+      }
+    };
+
+    fetchMeta();
+  }, []);
 
   useEffect(() => {
     if (!eventId) {
-      setTeams([]);
-      setPlayers([]);
-      setLoading(false);
       return;
     }
 
     const fetchData = async () => {
       try {
-        const [teamsRes, playersRes] = await Promise.all([
+        const [teamsRes, playersRes, allPlayersRes] = await Promise.all([
           axios.get(`${API_URL}/api/matches/teams`, { params: { eventId } }),
           axios.get(`${API_URL}/api/matches/players`, { params: { eventId } }),
+          axios.get(`${API_URL}/api/matches/players`),
         ]);
-        setTeams(teamsRes.data);
-        setPlayers(playersRes.data);
+
+        setTeams(Array.isArray(teamsRes.data) ? teamsRes.data : []);
+        setPlayers(Array.isArray(playersRes.data) ? playersRes.data : []);
+        setAllPlayers(
+          Array.isArray(allPlayersRes.data) ? allPlayersRes.data : [],
+        );
       } catch (err) {
         console.error("Failed to fetch roster data", err);
-      } finally {
-        setLoading(false);
       }
     };
+
     fetchData();
 
     const onEventChange = (evt) =>
@@ -77,27 +159,48 @@ const Roster = () => {
     return () => window.removeEventListener(EVENT_CHANGE_EVENT, onEventChange);
   }, [eventId]);
 
-  // Compute unique districts
-  const uniqueDistricts = ["All", ...new Set(teams.map((t) => t.district))];
+  const uniqueDistricts = [
+    "All",
+    ...new Set(teams.map((team) => team.district)),
+  ];
 
-  // Process data for display
-  const filteredPlayers = players.filter((p) => {
-    const team = teams.find((t) => t.id === p.teamId);
+  const filteredPlayers = players.filter((player) => {
+    const team = teams.find((entry) => entry.id === player.teamId);
     if (!team) return false;
+
     const matchSearch =
-      p.name.toLowerCase().includes(search.toLowerCase()) ||
+      player.name.toLowerCase().includes(search.toLowerCase()) ||
       team.name.toLowerCase().includes(search.toLowerCase());
     const matchDistrict =
       districtFilter === "All" || team.district === districtFilter;
     const matchPosition =
-      positionFilter === "All" || p.position === positionFilter;
+      positionFilter === "All" || player.position === positionFilter;
+
     return matchSearch && matchDistrict && matchPosition;
   });
+
+  const resetPlayerForm = () => {
+    setEditingPlayerId("");
+    setPhotoPreview(null);
+    setNewPlayer({
+      name: "",
+      email: "",
+      phone: "",
+      age: "",
+      weight: "",
+      position: "Raider",
+      teamId: "",
+      dob: "",
+      aadhar: "",
+      photoUrl: "",
+    });
+  };
 
   const handleDeletePlayer = async (playerId) => {
     try {
       await axios.delete(`${API_URL}/api/matches/players/${playerId}`);
-      setPlayers((prev) => prev.filter((p) => p.id !== playerId));
+      setPlayers((prev) => prev.filter((player) => player.id !== playerId));
+      setAllPlayers((prev) => prev.filter((player) => player.id !== playerId));
     } catch (err) {
       console.error("Delete failed", err);
       alert("Failed to delete player");
@@ -106,6 +209,7 @@ const Roster = () => {
 
   const handleEditPlayer = (player) => {
     setEditingPlayerId(player.id);
+    setPhotoPreview(player.photoUrl || null);
     setNewPlayer({
       name: player.name || "",
       email: player.email || "",
@@ -121,21 +225,95 @@ const Roster = () => {
     setShowAddForm(true);
   };
 
+  const handlePhotoUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setPhotoPreview(URL.createObjectURL(file));
+    const uploadData = new FormData();
+    uploadData.append("photo", file);
+
+    try {
+      const res = await axios.post(`${API_URL}/api/matches/upload`, uploadData);
+      setNewPlayer((current) => ({
+        ...current,
+        photoUrl: res.data.url,
+        photoPublicId: res.data.publicId || "",
+      }));
+    } catch {
+      setNewPlayer((current) => ({
+        ...current,
+        photoUrl: URL.createObjectURL(file),
+        photoPublicId: "",
+      }));
+    }
+  };
+
+  const startLiveCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false,
+      });
+      cameraStreamRef.current = stream;
+      setCameraOpen(true);
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(() => {});
+        }
+      }, 0);
+    } catch {
+      alert("Camera access is required to take a live photo.");
+    }
+  };
+
+  const stopLiveCamera = () => {
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+    }
+    setCameraOpen(false);
+  };
+
+  const captureLivePhoto = () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+    setPhotoPreview(dataUrl);
+    setNewPlayer((current) => ({ ...current, photoUrl: dataUrl }));
+    stopLiveCamera();
+  };
+
   const handleSavePlayer = async (e) => {
     e.preventDefault();
+
+    const validation = validatePlayerIdentity({
+      player: { ...newPlayer, eventId },
+      existingPlayers: allPlayers,
+      editingPlayerId,
+    });
+
+    if (!validation.ok) {
+      return alert(validation.message);
+    }
+
     try {
+      const playerPayload = buildPlayerPayload({ ...newPlayer, eventId });
       const res = editingPlayerId
         ? await axios.patch(
             `${API_URL}/api/matches/players/${editingPlayerId}`,
-            {
-              ...newPlayer,
-              eventId,
-            },
+            playerPayload,
           )
-        : await axios.post(`${API_URL}/api/matches/players`, {
-            ...newPlayer,
-            eventId,
-          });
+        : await axios.post(`${API_URL}/api/matches/players`, playerPayload);
 
       if (editingPlayerId) {
         setPlayers((prev) =>
@@ -145,24 +323,23 @@ const Roster = () => {
               : player,
           ),
         );
+        setAllPlayers((prev) =>
+          prev.map((player) =>
+            player.id === editingPlayerId
+              ? { ...player, ...newPlayer, id: editingPlayerId, eventId }
+              : player,
+          ),
+        );
       } else {
         setPlayers((prev) => [...prev, res.data]);
+        setAllPlayers((prev) => [...prev, res.data]);
       }
 
       setShowAddForm(false);
       setEditingPlayerId("");
-      setNewPlayer({
-        name: "",
-        email: "",
-        phone: "",
-        age: "",
-        weight: "",
-        position: "Raider",
-        teamId: "",
-        dob: "",
-        aadhar: "",
-        photoUrl: "",
-      });
+      setPhotoPreview(null);
+      stopLiveCamera();
+      resetPlayerForm();
     } catch (err) {
       console.error("Save player failed", err);
       alert(err.response?.data?.error || "Failed to save player");
@@ -186,6 +363,9 @@ const Roster = () => {
       await axios.delete(`${API_URL}/api/matches/teams/${teamId}`);
       setTeams((prev) => prev.filter((team) => team.id !== teamId));
       setPlayers((prev) => prev.filter((player) => player.teamId !== teamId));
+      setAllPlayers((prev) =>
+        prev.filter((player) => player.teamId !== teamId),
+      );
     } catch (err) {
       console.error("Delete team failed", err);
       alert(err.response?.data?.error || "Failed to delete team");
@@ -226,35 +406,6 @@ const Roster = () => {
     }
   };
 
-  const handleAddPlayer = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await axios.post(`${API_URL}/api/matches/players`, {
-        ...newPlayer,
-        eventId,
-      });
-      setPlayers((prev) => [...prev, res.data]);
-      setShowAddForm(false);
-      setNewPlayer({
-        name: "",
-        age: "",
-        weight: "",
-        position: "Raider",
-        teamId: "",
-      });
-    } catch (err) {
-      console.error("Add failed", err);
-      alert("Failed to add player");
-    }
-  };
-
-  if (loading)
-    return (
-      <div style={{ padding: "3rem", textAlign: "center" }}>
-        Loading Database...
-      </div>
-    );
-
   if (!eventId) {
     return (
       <div className="glass-panel" style={{ padding: "2rem" }}>
@@ -274,7 +425,6 @@ const Roster = () => {
         </p>
       </header>
 
-      {/* Team Management */}
       <div
         className="glass-panel"
         style={{ padding: "2rem", marginBottom: "2rem" }}
@@ -309,6 +459,11 @@ const Roster = () => {
               marginBottom: "1.5rem",
             }}
           >
+            {geoNotice && (
+              <div className="sheet-block" style={{ gridColumn: "1 / -1" }}>
+                <span className="muted">{geoNotice}</span>
+              </div>
+            )}
             <input
               className="form-control"
               placeholder="Team Name"
@@ -316,24 +471,73 @@ const Roster = () => {
               value={newTeam.name}
               onChange={(e) => setNewTeam({ ...newTeam, name: e.target.value })}
             />
-            <input
-              className="form-control"
-              placeholder="State"
-              required
-              value={newTeam.state}
-              onChange={(e) =>
-                setNewTeam({ ...newTeam, state: e.target.value })
-              }
-            />
-            <input
-              className="form-control"
-              placeholder="District"
-              required
-              value={newTeam.district}
-              onChange={(e) =>
-                setNewTeam({ ...newTeam, district: e.target.value })
-              }
-            />
+            <div className="form-group">
+              <label className="form-label">Event</label>
+              <select
+                className="form-control"
+                required
+                value={eventId}
+                onChange={(e) => {
+                  setActiveEventId(e.target.value);
+                  setEventId(e.target.value);
+                }}
+              >
+                <option value="">-- Select Event --</option>
+                {events.map((event) => (
+                  <option key={event.id} value={event.id}>
+                    {event.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">State</label>
+              <select
+                className="form-control"
+                required
+                value={newTeam.state}
+                onChange={(e) =>
+                  setNewTeam({
+                    ...newTeam,
+                    state: e.target.value,
+                    district: "",
+                  })
+                }
+              >
+                <option value="">-- Select State --</option>
+                {states.map((state) => (
+                  <option key={state} value={state}>
+                    {state}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">District Selection</label>
+              {districtOptions.length > 0 ? (
+                <select
+                  className="form-control"
+                  required
+                  value={newTeam.district}
+                  onChange={(e) =>
+                    setNewTeam({ ...newTeam, district: e.target.value })
+                  }
+                >
+                  <option value="">-- Select District --</option>
+                  {districtOptions.map((district) => (
+                    <option key={district} value={district}>
+                      {district}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  className="form-control"
+                  disabled
+                  placeholder="District options are loading"
+                />
+              )}
+            </div>
             <input
               className="form-control"
               placeholder="Coach"
@@ -398,7 +602,6 @@ const Roster = () => {
         </div>
       </div>
 
-      {/* Action Bar */}
       <div
         className="glass-panel"
         style={{
@@ -411,11 +614,13 @@ const Roster = () => {
       >
         <button
           className="btn btn-primary"
-          onClick={() => setShowAddForm(true)}
+          onClick={() => {
+            resetPlayerForm();
+            setShowAddForm(true);
+          }}
         >
           <Plus size={16} /> Add Player
         </button>
-        {/* Filters Bar */}
         <div
           className="flex items-center gap-4"
           style={{
@@ -469,9 +674,13 @@ const Roster = () => {
                 value={districtFilter}
                 onChange={(e) => setDistrictFilter(e.target.value)}
               >
-                {uniqueDistricts.map((d) => (
-                  <option key={d} value={d} style={{ color: "black" }}>
-                    {d === "All" ? "All Districts" : d}
+                {uniqueDistricts.map((district) => (
+                  <option
+                    key={district}
+                    value={district}
+                    style={{ color: "black" }}
+                  >
+                    {district === "All" ? "All Districts" : district}
                   </option>
                 ))}
               </select>
@@ -527,7 +736,6 @@ const Roster = () => {
         </div>
       </div>
 
-      {/* Add Player Form */}
       {showAddForm && (
         <div
           className="glass-panel"
@@ -538,162 +746,264 @@ const Roster = () => {
           </h2>
           <form
             onSubmit={handleSavePlayer}
-            className="grid gap-4"
             style={{
               display: "grid",
               gap: "1rem",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gridTemplateColumns: "320px 1fr",
             }}
           >
-            <input
-              className="form-control"
-              placeholder="Player Name"
-              required
-              value={newPlayer.name}
-              onChange={(e) =>
-                setNewPlayer({ ...newPlayer, name: e.target.value })
-              }
-            />
-            <input
-              type="email"
-              className="form-control"
-              placeholder="Email"
-              required
-              value={newPlayer.email}
-              onChange={(e) =>
-                setNewPlayer({ ...newPlayer, email: e.target.value })
-              }
-            />
-            <input
-              type="tel"
-              className="form-control"
-              placeholder="Phone Number"
-              required
-              maxLength="10"
-              value={newPlayer.phone}
-              onChange={(e) =>
-                setNewPlayer({
-                  ...newPlayer,
-                  phone: e.target.value.replace(/\D/g, ""),
-                })
-              }
-            />
-            <input
-              type="number"
-              className="form-control"
-              placeholder="Age"
-              required
-              value={newPlayer.age}
-              onChange={(e) =>
-                setNewPlayer({ ...newPlayer, age: e.target.value })
-              }
-            />
-            <input
-              type="number"
-              className="form-control"
-              placeholder="Weight (kg)"
-              required
-              value={newPlayer.weight}
-              onChange={(e) =>
-                setNewPlayer({ ...newPlayer, weight: e.target.value })
-              }
-            />
-            <input
-              className="form-control"
-              placeholder="Photo URL"
-              required
-              value={newPlayer.photoUrl}
-              onChange={(e) =>
-                setNewPlayer({ ...newPlayer, photoUrl: e.target.value })
-              }
-            />
-            <input
-              className="form-control"
-              type="date"
-              required
-              value={newPlayer.dob}
-              onChange={(e) =>
-                setNewPlayer({ ...newPlayer, dob: e.target.value })
-              }
-            />
-            <input
-              className="form-control"
-              placeholder="Aadhar Number"
-              required
-              value={newPlayer.aadhar}
-              onChange={(e) =>
-                setNewPlayer({ ...newPlayer, aadhar: e.target.value })
-              }
-            />
-            <select
-              className="form-control"
-              value={newPlayer.position}
-              onChange={(e) =>
-                setNewPlayer({ ...newPlayer, position: e.target.value })
-              }
-            >
-              <option value="Raider">Raider</option>
-              <option value="Left Corner">Left Corner</option>
-              <option value="Right Corner">Right Corner</option>
-              <option value="Left Cover">Left Cover</option>
-              <option value="Right Cover">Right Cover</option>
-              <option value="All-rounder">All-rounder</option>
-            </select>
-            <select
-              className="form-control"
-              required
-              value={newPlayer.teamId}
-              onChange={(e) =>
-                setNewPlayer({ ...newPlayer, teamId: e.target.value })
-              }
-            >
-              <option value="">Select Team</option>
-              {teams.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} ({t.district})
-                </option>
-              ))}
-            </select>
-            <div
-              className="flex gap-2 mt-2"
-              style={{
-                gridColumn: "1 / -1",
-                display: "flex",
-                gap: "0.75rem",
-                flexWrap: "wrap",
-              }}
-            >
-              <button type="submit" className="btn btn-primary">
-                {editingPlayerId ? "Save Player" : "Create Player"}
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => {
-                  setShowAddForm(false);
-                  setEditingPlayerId("");
-                  setNewPlayer({
-                    name: "",
-                    email: "",
-                    phone: "",
-                    age: "",
-                    weight: "",
-                    position: "Raider",
-                    teamId: "",
-                    dob: "",
-                    aadhar: "",
-                    photoUrl: "",
-                  });
+            <div style={{ textAlign: "center" }}>
+              <div
+                style={{
+                  width: "100%",
+                  height: "350px",
+                  background: "rgba(0,0,0,0.3)",
+                  borderRadius: "20px",
+                  border: "2px dashed var(--glass-border)",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  overflow: "hidden",
+                  marginBottom: "1rem",
+                  position: "relative",
                 }}
               >
-                Cancel
-              </button>
+                {cameraOpen ? (
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                    }}
+                  />
+                ) : photoPreview || newPlayer.photoUrl ? (
+                  <img
+                    src={photoPreview || newPlayer.photoUrl}
+                    alt="Player"
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                    }}
+                  />
+                ) : (
+                  <>
+                    <Camera
+                      size={64}
+                      color="var(--text-muted)"
+                      style={{ marginBottom: "1rem" }}
+                    />
+                    <span style={{ color: "var(--text-muted)" }}>
+                      Take a live photo or upload one
+                    </span>
+                  </>
+                )}
+              </div>
+              <div style={{ display: "grid", gap: "0.75rem" }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={cameraOpen ? captureLivePhoto : startLiveCamera}
+                >
+                  <Camera size={18} />{" "}
+                  {cameraOpen ? "Capture Live Photo" : "Take Live Photo"}
+                </button>
+                {cameraOpen && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={stopLiveCamera}
+                  >
+                    Cancel Camera
+                  </button>
+                )}
+                <label className="btn btn-secondary" style={{ width: "100%" }}>
+                  <Upload size={20} /> Upload From Device
+                  <input
+                    type="file"
+                    hidden
+                    accept="image/*"
+                    onChange={handlePhotoUpload}
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "1.25rem",
+              }}
+            >
+              <div className="form-group" style={{ gridColumn: "1 / -1" }}>
+                <label className="form-label">Player Name</label>
+                <input
+                  className="form-control"
+                  placeholder="Player Name"
+                  required
+                  value={newPlayer.name}
+                  onChange={(e) =>
+                    setNewPlayer({ ...newPlayer, name: e.target.value })
+                  }
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Email</label>
+                <input
+                  type="email"
+                  className="form-control"
+                  placeholder="Email"
+                  required
+                  value={newPlayer.email}
+                  onChange={(e) =>
+                    setNewPlayer({ ...newPlayer, email: e.target.value })
+                  }
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Phone Number</label>
+                <input
+                  type="tel"
+                  className="form-control"
+                  placeholder="Phone Number"
+                  required
+                  maxLength="10"
+                  value={newPlayer.phone}
+                  onChange={(e) =>
+                    setNewPlayer({
+                      ...newPlayer,
+                      phone: e.target.value.replace(/\D/g, ""),
+                    })
+                  }
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Age</label>
+                <input
+                  type="number"
+                  className="form-control"
+                  placeholder="Age"
+                  required
+                  value={newPlayer.age}
+                  onChange={(e) =>
+                    setNewPlayer({ ...newPlayer, age: e.target.value })
+                  }
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Weight (kg)</label>
+                <input
+                  type="number"
+                  className="form-control"
+                  placeholder="Weight (kg)"
+                  required
+                  value={newPlayer.weight}
+                  onChange={(e) =>
+                    setNewPlayer({ ...newPlayer, weight: e.target.value })
+                  }
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Date of Birth</label>
+                <input
+                  className="form-control"
+                  type="date"
+                  required
+                  value={newPlayer.dob}
+                  onChange={(e) =>
+                    setNewPlayer({ ...newPlayer, dob: e.target.value })
+                  }
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Aadhar Number</label>
+                <input
+                  className="form-control"
+                  placeholder="Aadhar Number"
+                  inputMode="numeric"
+                  maxLength="12"
+                  required
+                  value={newPlayer.aadhar}
+                  onChange={(e) =>
+                    setNewPlayer({
+                      ...newPlayer,
+                      aadhar: e.target.value.replace(/\D/g, ""),
+                    })
+                  }
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Primary Position</label>
+                <select
+                  className="form-control"
+                  value={newPlayer.position}
+                  onChange={(e) =>
+                    setNewPlayer({ ...newPlayer, position: e.target.value })
+                  }
+                >
+                  <option value="Raider">Raider</option>
+                  <option value="Left Corner">Left Corner</option>
+                  <option value="Right Corner">Right Corner</option>
+                  <option value="Left Cover">Left Cover</option>
+                  <option value="Right Cover">Right Cover</option>
+                  <option value="All-rounder">All-rounder</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Assign to Team</label>
+                <select
+                  className="form-control"
+                  required
+                  value={newPlayer.teamId}
+                  onChange={(e) =>
+                    setNewPlayer({ ...newPlayer, teamId: e.target.value })
+                  }
+                >
+                  <option value="">Select Team</option>
+                  {teams.map((team) => (
+                    <option key={team.id} value={team.id}>
+                      {team.name} ({team.state} / {team.district})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div
+                style={{
+                  gridColumn: "1 / -1",
+                  display: "flex",
+                  gap: "0.75rem",
+                  flexWrap: "wrap",
+                }}
+              >
+                <button type="submit" className="btn btn-primary">
+                  {editingPlayerId ? "Save Player" : "Create Player"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setShowAddForm(false);
+                    setEditingPlayerId("");
+                    setPhotoPreview(null);
+                    stopLiveCamera();
+                    resetPlayerForm();
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           </form>
         </div>
       )}
 
-      {/* Players Grid */}
       <div
         style={{
           display: "grid",
@@ -702,14 +1012,14 @@ const Roster = () => {
         }}
       >
         {filteredPlayers.length > 0 ? (
-          filteredPlayers.map((player, i) => {
-            const team = teams.find((t) => t.id === player.teamId);
+          filteredPlayers.map((player, index) => {
+            const team = teams.find((entry) => entry.id === player.teamId);
             return (
               <motion.div
                 key={player.id}
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: i * 0.05 }}
+                transition={{ delay: index * 0.05 }}
                 className="glass-panel"
                 style={{
                   overflow: "hidden",
@@ -718,7 +1028,6 @@ const Roster = () => {
                   position: "relative",
                 }}
               >
-                {/* Card Header */}
                 <div
                   style={{
                     height: "220px",
@@ -810,7 +1119,6 @@ const Roster = () => {
                   </div>
                 </div>
 
-                {/* Card Body */}
                 <div
                   style={{
                     padding: "1.5rem",

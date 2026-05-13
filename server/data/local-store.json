@@ -1,5 +1,16 @@
 {
-  "events": [],
+  "events": [
+    {
+      "id": "id_1778599923344_i6vdbet",
+      "name": "Senior State",
+      "state": "Jharkhand",
+      "district": "Dhanbad",
+      "startDate": "2026-05-13",
+      "endDate": "2026-05-15",
+      "isActive": true,
+      "createdAt": "2026-05-12T15:32:02.985Z"
+    }
+  ],
   "teams": [],
   "players": [],
   "matches": []

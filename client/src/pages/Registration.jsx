@@ -6,7 +6,6 @@ import {
   Camera,
   Upload,
   ArrowRight,
-  ArrowLeft,
   CheckCircle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -15,6 +14,11 @@ import {
   getActiveEventId,
   setActiveEventId,
 } from "../utils/eventSelection";
+import {
+  buildPlayerPayload,
+  validatePlayerIdentity,
+  calculateAgeFromDob,
+} from "../utils/playerValidation";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
@@ -23,13 +27,18 @@ const Registration = () => {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [teams, setTeams] = useState([]);
+  const [players, setPlayers] = useState([]);
   const [events, setEvents] = useState([]);
   const [states, setStates] = useState([]);
   const [districtsByState, setDistrictsByState] = useState({});
   const [allDistricts, setAllDistricts] = useState([]);
   const [geoNotice, setGeoNotice] = useState("");
   const [photoPreview, setPhotoPreview] = useState(null);
+  const [aadharFrontPreview, setAadharFrontPreview] = useState(null);
+  const [aadharBackPreview, setAadharBackPreview] = useState(null);
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [aadharCameraMode, setAadharCameraMode] = useState(null); // "front", "back", or null
+  const [pendingSubmissions, setPendingSubmissions] = useState([]);
   const videoRef = useRef(null);
   const cameraStreamRef = useRef(null);
   const [formData, setFormData] = useState({
@@ -39,6 +48,7 @@ const Registration = () => {
     district: "",
     coach: "",
     playerName: "",
+    fatherName: "",
     email: "",
     phone: "",
     age: "",
@@ -47,7 +57,10 @@ const Registration = () => {
     teamId: "",
     dob: "",
     aadhar: "",
+    aadharFrontUrl: "",
+    aadharBackUrl: "",
     photoUrl: "",
+    photoPublicId: "",
   });
 
   const districtOptions = useMemo(() => {
@@ -60,17 +73,23 @@ const Registration = () => {
   useEffect(() => {
     const bootstrap = async () => {
       try {
-        const [eventsRes, locationRes, detectRes] = await Promise.all([
-          axios.get(`${API_URL}/api/matches/events`),
-          axios.get(`${API_URL}/api/matches/location/options`),
-          axios.get(`${API_URL}/api/matches/location/detect`),
-        ]);
+        const [eventsRes, locationRes, detectRes, playersRes] =
+          await Promise.all([
+            axios.get(`${API_URL}/api/matches/events`),
+            axios.get(`${API_URL}/api/matches/location/options`),
+            axios.get(`${API_URL}/api/matches/location/detect`),
+            axios.get(`${API_URL}/api/matches/players`),
+          ]);
 
         const eventsData = Array.isArray(eventsRes.data) ? eventsRes.data : [];
         const optionsData = locationRes.data || {};
         const detectData = detectRes.data || {};
+        const playersData = Array.isArray(playersRes.data)
+          ? playersRes.data
+          : [];
 
         setEvents(eventsData);
+        setPlayers(playersData);
         setStates(Array.isArray(optionsData.states) ? optionsData.states : []);
         setDistrictsByState(optionsData.districtsByState || {});
         setAllDistricts(
@@ -101,6 +120,12 @@ const Registration = () => {
             "State and district were auto-detected from your IP. You can change them.",
           );
         }
+        try {
+          const raw = localStorage.getItem("kabaddipro_pending_registrations");
+          setPendingSubmissions(raw ? JSON.parse(raw) : []);
+        } catch {
+          setPendingSubmissions([]);
+        }
       } catch (err) {
         console.error("Failed to initialize registration", err);
       }
@@ -121,7 +146,6 @@ const Registration = () => {
 
   useEffect(() => {
     if (!formData.eventId) {
-      setTeams([]);
       return;
     }
 
@@ -158,9 +182,17 @@ const Registration = () => {
     try {
       setLoading(true);
       const res = await axios.post(`${API_URL}/api/matches/upload`, uploadData);
-      setFormData({ ...formData, photoUrl: res.data.url });
+      setFormData({
+        ...formData,
+        photoUrl: res.data.url,
+        photoPublicId: res.data.publicId || "",
+      });
     } catch {
-      setFormData({ ...formData, photoUrl: URL.createObjectURL(file) });
+      setFormData({
+        ...formData,
+        photoUrl: URL.createObjectURL(file),
+        photoPublicId: "",
+      });
     } finally {
       setLoading(false);
     }
@@ -180,7 +212,7 @@ const Registration = () => {
           videoRef.current.play().catch(() => {});
         }
       }, 0);
-    } catch (error) {
+    } catch {
       alert("Camera access is required to take a live photo.");
     }
   };
@@ -193,7 +225,7 @@ const Registration = () => {
     setCameraOpen(false);
   };
 
-  const captureLivePhoto = () => {
+  const captureLivePhoto = (mode = "player") => {
     const video = videoRef.current;
     if (!video) return;
 
@@ -205,9 +237,44 @@ const Registration = () => {
 
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
     const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
-    setPhotoPreview(dataUrl);
-    setFormData((current) => ({ ...current, photoUrl: dataUrl }));
+
+    if (mode === "player") {
+      setPhotoPreview(dataUrl);
+      setFormData((current) => ({ ...current, photoUrl: dataUrl }));
+    } else if (mode === "front") {
+      setAadharFrontPreview(dataUrl);
+      setFormData((current) => ({ ...current, aadharFrontUrl: dataUrl }));
+    } else if (mode === "back") {
+      setAadharBackPreview(dataUrl);
+      setFormData((current) => ({ ...current, aadharBackUrl: dataUrl }));
+    }
+
     stopLiveCamera();
+  };
+
+  const startAadharCamera = (side) => {
+    setAadharCameraMode(side);
+    startLiveCamera();
+  };
+
+  const handleAadharFileUpload = (e, side) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result;
+      if (!dataUrl) return;
+
+      if (side === "front") {
+        setAadharFrontPreview(dataUrl);
+        setFormData((current) => ({ ...current, aadharFrontUrl: dataUrl }));
+      } else if (side === "back") {
+        setAadharBackPreview(dataUrl);
+        setFormData((current) => ({ ...current, aadharBackUrl: dataUrl }));
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleSubmitTeam = async (e) => {
@@ -234,24 +301,30 @@ const Registration = () => {
 
   const handleSubmitPlayer = async (e) => {
     e.preventDefault();
+
+    const validation = validatePlayerIdentity({
+      player: formData,
+      existingPlayers: players,
+    });
+
+    if (!validation.ok) {
+      return alert(validation.message);
+    }
+
     if (!formData.photoUrl) return alert("Please upload a player photo");
+    if (!formData.aadharFrontUrl)
+      return alert("Please upload Aadhar front image");
+    if (!formData.aadharBackUrl)
+      return alert("Please upload Aadhar back image");
     if (!formData.eventId) return alert("Please select an event first.");
 
     setLoading(true);
     try {
-      await axios.post(`${API_URL}/api/matches/players`, {
-        eventId: formData.eventId,
-        name: formData.playerName,
-        email: formData.email,
-        phone: formData.phone,
-        age: formData.age,
-        weight: formData.weight,
-        position: formData.position,
-        teamId: formData.teamId,
-        dob: formData.dob,
-        aadhar: formData.aadhar,
-        photoUrl: formData.photoUrl,
-      });
+      const res = await axios.post(
+        `${API_URL}/api/matches/players`,
+        buildPlayerPayload(formData),
+      );
+      setPlayers((currentPlayers) => [...currentPlayers, res.data]);
       setStep(3); // Success step
     } catch (err) {
       alert("Error: " + (err.response?.data?.error || err.message));
@@ -268,6 +341,7 @@ const Registration = () => {
       district: "",
       coach: "",
       playerName: "",
+      fatherName: "",
       email: "",
       phone: "",
       age: "",
@@ -276,10 +350,53 @@ const Registration = () => {
       teamId: "",
       dob: "",
       aadhar: "",
+      aadharFrontUrl: "",
+      aadharBackUrl: "",
       photoUrl: "",
+      photoPublicId: "",
     });
     setPhotoPreview(null);
+    setAadharFrontPreview(null);
+    setAadharBackPreview(null);
     setStep(1);
+  };
+
+  const persistPending = (next) => {
+    try {
+      localStorage.setItem(
+        "kabaddipro_pending_registrations",
+        JSON.stringify(next || []),
+      );
+    } catch (e) {
+      console.warn("persistPending error", e);
+    }
+  };
+
+  const approvePending = async (id) => {
+    const item = pendingSubmissions.find((p) => p.id === id);
+    if (!item) return;
+    if (!item.data.photoUrl) return alert("Pending entry lacks photo");
+    try {
+      setLoading(true);
+      const payload = buildPlayerPayload(item.data);
+      await axios.post(`${API_URL}/api/matches/players`, payload);
+      const next = pendingSubmissions.filter((p) => p.id !== id);
+      setPendingSubmissions(next);
+      persistPending(next);
+      alert("Player approved and added to roster.");
+    } catch (err) {
+      alert("Approval failed: " + (err.response?.data?.error || err.message));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const declinePending = (id) => {
+    if (!window.confirm("Decline and remove this pending registration?"))
+      return;
+    const next = pendingSubmissions.filter((p) => p.id !== id);
+    setPendingSubmissions(next);
+    persistPending(next);
   };
 
   return (
@@ -293,6 +410,59 @@ const Registration = () => {
           controls.
         </p>
       </header>
+
+      {pendingSubmissions && pendingSubmissions.length > 0 && (
+        <div
+          className="glass-panel"
+          style={{ padding: "1rem", maxWidth: "900px", margin: "0 auto 1rem" }}
+        >
+          <h3 style={{ marginBottom: "0.5rem" }}>Pending User Registrations</h3>
+          <p className="muted" style={{ marginBottom: "1rem" }}>
+            These submissions were made by users and require admin approval
+            before being added to the official roster.
+          </p>
+          <div style={{ display: "grid", gap: "0.75rem" }}>
+            {pendingSubmissions.map((p) => (
+              <div
+                key={p.id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "0.5rem",
+                  borderRadius: 8,
+                  background: "rgba(255,255,255,0.02)",
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 700 }}>{p.data.playerName}</div>
+                  <div className="muted">
+                    Submitted: {new Date(p.createdAt).toLocaleString()}
+                  </div>
+                  <div className="muted">
+                    Email: {p.data.email} • Aadhar: {p.data.aadhar}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: "0.5rem" }}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => approvePending(p.id)}
+                    disabled={loading}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => declinePending(p.id)}
+                  >
+                    Decline
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div
         className="glass-panel"
@@ -553,7 +723,11 @@ const Registration = () => {
                     <button
                       type="button"
                       className="btn btn-primary"
-                      onClick={cameraOpen ? captureLivePhoto : startLiveCamera}
+                      onClick={
+                        cameraOpen
+                          ? () => captureLivePhoto(aadharCameraMode || "player")
+                          : startLiveCamera
+                      }
                     >
                       <Camera size={18} />{" "}
                       {cameraOpen ? "Capture Live Photo" : "Take Live Photo"}
@@ -598,6 +772,19 @@ const Registration = () => {
                       value={formData.playerName}
                       onChange={(e) =>
                         setFormData({ ...formData, playerName: e.target.value })
+                      }
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Father's Name</label>
+                    <input
+                      className="form-control"
+                      required
+                      placeholder="Enter father's name"
+                      value={formData.fatherName}
+                      onChange={(e) =>
+                        setFormData({ ...formData, fatherName: e.target.value })
                       }
                     />
                   </div>
@@ -684,11 +871,16 @@ const Registration = () => {
                     <label className="form-label">Aadhar Number (KYC)</label>
                     <input
                       className="form-control"
+                      inputMode="numeric"
+                      maxLength="12"
                       required
                       placeholder="12-digit UID"
                       value={formData.aadhar}
                       onChange={(e) =>
-                        setFormData({ ...formData, aadhar: e.target.value })
+                        setFormData({
+                          ...formData,
+                          aadhar: e.target.value.replace(/\D/g, ""),
+                        })
                       }
                     />
                   </div>
@@ -700,23 +892,29 @@ const Registration = () => {
                       className="form-control"
                       required
                       value={formData.dob}
-                      onChange={(e) =>
-                        setFormData({ ...formData, dob: e.target.value })
-                      }
+                      onChange={(e) => {
+                        const dobVal = e.target.value;
+                        const calculatedAge = calculateAgeFromDob(dobVal);
+                        setFormData({
+                          ...formData,
+                          dob: dobVal,
+                          age:
+                            calculatedAge !== null ? String(calculatedAge) : "",
+                        });
+                      }}
                     />
                   </div>
 
                   <div className="form-group">
-                    <label className="form-label">Current Age</label>
+                    <label className="form-label">
+                      Current Age (Auto-calculated)
+                    </label>
                     <input
-                      type="number"
+                      type="text"
                       className="form-control"
-                      required
-                      placeholder="e.g. 24"
+                      readOnly
+                      placeholder="Age will be calculated from DOB"
                       value={formData.age}
-                      onChange={(e) =>
-                        setFormData({ ...formData, age: e.target.value })
-                      }
                     />
                   </div>
 
@@ -764,6 +962,203 @@ const Registration = () => {
                   </div>
                 </div>
               </div>
+
+              {/* AADHAR IMAGES SECTION */}
+              <div style={{ marginTop: "2rem" }}>
+                <h3
+                  style={{
+                    marginBottom: "1rem",
+                    fontSize: "1.1rem",
+                    color: "var(--primary)",
+                  }}
+                >
+                  Aadhar Verification (KYC)
+                </h3>
+                <p
+                  style={{
+                    marginBottom: "1.5rem",
+                    color: "var(--text-muted)",
+                    fontSize: "0.9rem",
+                  }}
+                >
+                  Capture or upload clear images of both sides of the player's
+                  Aadhar for verification.
+                </p>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: "1.5rem",
+                    marginBottom: "1.5rem",
+                  }}
+                >
+                  {/* AADHAR FRONT */}
+                  <div
+                    style={{
+                      border: "1px solid var(--glass-border)",
+                      borderRadius: "8px",
+                      padding: "1rem",
+                    }}
+                  >
+                    <label
+                      style={{
+                        fontWeight: 600,
+                        marginBottom: "0.75rem",
+                        display: "block",
+                        color: "var(--text-primary)",
+                      }}
+                    >
+                      Aadhar Front Side
+                    </label>
+                    <div
+                      style={{
+                        width: "100%",
+                        height: "200px",
+                        background: "rgba(0,0,0,0.2)",
+                        borderRadius: "8px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        marginBottom: "0.75rem",
+                        overflow: "hidden",
+                      }}
+                    >
+                      {aadharFrontPreview ? (
+                        <img
+                          src={aadharFrontPreview}
+                          alt="Aadhar Front"
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "cover",
+                          }}
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            color: "var(--text-muted)",
+                            textAlign: "center",
+                          }}
+                        >
+                          <div style={{ fontSize: "0.9rem" }}>
+                            Front side image
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: "grid", gap: "0.5rem" }}>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        style={{ fontSize: "0.9rem" }}
+                        onClick={() => startAadharCamera("front")}
+                      >
+                        <Camera size={16} />{" "}
+                        {aadharFrontPreview ? "Retake Front" : "Capture Front"}
+                      </button>
+                      <label
+                        className="btn btn-secondary"
+                        style={{ fontSize: "0.9rem", cursor: "pointer" }}
+                      >
+                        <Upload size={16} /> Upload Front
+                        <input
+                          type="file"
+                          hidden
+                          accept="image/*"
+                          onChange={(e) => handleAadharFileUpload(e, "front")}
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* AADHAR BACK */}
+                  <div
+                    style={{
+                      border: "1px solid var(--glass-border)",
+                      borderRadius: "8px",
+                      padding: "1rem",
+                    }}
+                  >
+                    <label
+                      style={{
+                        fontWeight: 600,
+                        marginBottom: "0.75rem",
+                        display: "block",
+                        color: "var(--text-primary)",
+                      }}
+                    >
+                      Aadhar Back Side
+                    </label>
+                    <div
+                      style={{
+                        width: "100%",
+                        height: "200px",
+                        background: "rgba(0,0,0,0.2)",
+                        borderRadius: "8px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        marginBottom: "0.75rem",
+                        overflow: "hidden",
+                      }}
+                    >
+                      {aadharBackPreview ? (
+                        <img
+                          src={aadharBackPreview}
+                          alt="Aadhar Back"
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "cover",
+                          }}
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            color: "var(--text-muted)",
+                            textAlign: "center",
+                          }}
+                        >
+                          <div style={{ fontSize: "0.9rem" }}>
+                            Back side image
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: "grid", gap: "0.5rem" }}>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        style={{ fontSize: "0.9rem" }}
+                        onClick={() => startAadharCamera("back")}
+                      >
+                        <Camera size={16} />{" "}
+                        {aadharBackPreview ? "Retake Back" : "Capture Back"}
+                      </button>
+                      <label
+                        className="btn btn-secondary"
+                        style={{ fontSize: "0.9rem", cursor: "pointer" }}
+                      >
+                        <Upload size={16} /> Upload Back
+                        <input
+                          type="file"
+                          hidden
+                          accept="image/*"
+                          onChange={(e) => handleAadharFileUpload(e, "back")}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {cameraOpen && (
+                <div className="camera-box">
+                  <video ref={videoRef} autoPlay muted playsInline />
+                </div>
+              )}
+
               <div
                 style={{
                   marginTop: "2rem",
