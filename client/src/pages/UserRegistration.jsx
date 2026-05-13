@@ -311,6 +311,7 @@ export default function UserRegistration() {
       getPreferredEventId(events) || getActiveEventId() || form.eventId;
     const submissionForm = {
       ...form,
+      name: form.playerName,
       eventId: resolvedEventId,
     };
 
