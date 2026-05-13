@@ -212,12 +212,11 @@ const Registration = () => {
       }
     };
 
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    lockScroll();
     window.addEventListener("keydown", onEscape);
 
     return () => {
-      document.body.style.overflow = previousOverflow;
+      unlockScroll();
       window.removeEventListener("keydown", onEscape);
     };
   }, [activeCameraTarget]);
@@ -288,6 +287,33 @@ const Registration = () => {
       cameraModalVideoRef.current.srcObject = null;
     }
     setActiveCameraTarget(null);
+  };
+
+  const lockScroll = () => {
+    try {
+      const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
+      document.body.style.position = "fixed";
+      document.body.style.top = `-${scrollY}px`;
+      document.body.style.left = "0";
+      document.body.style.right = "0";
+      document.body.dataset.scrollY = String(scrollY);
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  const unlockScroll = () => {
+    try {
+      const scrollY = parseInt(document.body.dataset.scrollY || "0", 10) || 0;
+      document.body.style.position = "";
+      document.body.style.top = "";
+      document.body.style.left = "";
+      document.body.style.right = "";
+      delete document.body.dataset.scrollY;
+      window.scrollTo(0, scrollY);
+    } catch (e) {
+      // ignore
+    }
   };
 
   const captureLivePhoto = () => {
